@@ -1,0 +1,10 @@
+project_id = "nur2-data-platform"
+
+[functions.fetchdataplans]
+verify_jwt = true
+
+[functions.initialize-wallet-funding]
+verify_jwt = true
+
+[functions.verify-wallet-funding]
+verify_jwt = true

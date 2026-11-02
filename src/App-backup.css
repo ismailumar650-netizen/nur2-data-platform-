@@ -1,0 +1,99 @@
+* {
+    margin: 0;
+      padding: 0;
+        box-sizing: border-box;
+          }
+
+          body {
+          font-family: Arial, sans-serif;
+          background: #f3f6fc;
+          color: #172554;
+          }
+
+          .app {
+          min-height: 100vh;
+          }
+
+          .header {
+          background: #082f70;
+          color: white;
+          padding: 22px 7%;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          }
+
+          .header h1 {
+          font-size: 25px;
+          font-weight: 900;
+          }
+
+          .header span {
+          color: #38bdf8;
+          }
+
+          button {
+          background: #0875e1;
+          color: white;
+          border: none;
+          padding: 13px 24px;
+          border-radius: 8px;
+          font-size: 15px;
+          font-weight: bold;
+          cursor: pointer;
+          }
+
+          button:hover {
+          background: #075bb0;
+          }
+
+          .hero {
+          text-align: center;
+          padding: 110px 20px;
+          }
+
+          .hero h2 {
+          font-size: 38px;
+          margin-bottom: 15px;
+          }
+
+          .hero p {
+          font-size: 18px;
+          color: #64748b;
+          margin-bottom: 30px;
+          }
+
+          .card {
+          background: white;
+          width: 90%;
+          max-width: 420px;
+          margin: 60px auto;
+          padding: 30px;
+          border-radius: 15px;
+          box-shadow: 0 5px 25px #00000010;
+          }
+
+          .card h2 {
+          text-align: center;
+          margin-bottom: 25px;
+          }
+
+          input {
+          width: 100%;
+          padding: 14px;
+          margin-bottom: 15px;
+          border: 1px solid #dbe3ef;
+          border-radius: 8px;
+          font-size: 15px;
+          }
+
+          .card button {
+          width: 100%;
+          }
+
+          footer {
+          text-align: center;
+          padding: 25px;
+          color: #64748b;
+          }
+}
