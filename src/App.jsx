@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase, supabaseConfigError } from "./supabase";
+import { fetchTransactionHistory } from "./data/transactions";
 import "./App.css";
 
 const nairaFormatter = new Intl.NumberFormat("en-NG", {
@@ -25,9 +26,12 @@ const navigation = [
   { id: "bills", label: "Bills", icon: "receipt" },
   { id: "history", label: "History", icon: "clock" },
   { id: "wallet", label: "Wallet", icon: "wallet" },
+  { id: "admin", label: "Admin", icon: "shield" },
 ];
 
-const mobileNavigation = navigation.filter((item) => item.id !== "history");
+const mobileNavigation = navigation.filter(
+  (item) => item.id !== "history" && item.id !== "admin",
+);
 
 const services = [
   {
@@ -297,14 +301,13 @@ function DataPlansPanel() {
   const [serviceId, setServiceId] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [plans, setPlans] = useState(null);
+  const [selectedPlan, setSelectedPlan] = useState(null);
   const [selectedPlanIndex, setSelectedPlanIndex] = useState(null);
   const [confirmationVisible, setConfirmationVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [errorDetails, setErrorDetails] = useState("");
 
-  const selectedPlan =
-    selectedPlanIndex === null ? null : plans?.[selectedPlanIndex] ?? null;
   const normalizedPhoneNumber = normalizeNigerianPhoneNumber(phoneNumber);
 
   async function loadPlans(event) {
@@ -329,6 +332,7 @@ function DataPlansPanel() {
     setErrorMessage("");
     setErrorDetails("");
     setPlans(null);
+    setSelectedPlan(null);
     setSelectedPlanIndex(null);
     setConfirmationVisible(false);
 
@@ -374,6 +378,8 @@ function DataPlansPanel() {
       if (typeof data?.error === "string") throw new Error(data.error);
 
       setPlans(getDataPlans(data));
+      setSelectedPlan(null);
+      setSelectedPlanIndex(null);
       setErrorDetails("");
     } catch (error) {
       setErrorMessage(
@@ -406,6 +412,7 @@ function DataPlansPanel() {
               onChange={(event) => {
                 setNetwork(event.target.value);
                 setPlans(null);
+                setSelectedPlan(null);
                 setSelectedPlanIndex(null);
                 setErrorMessage("");
                 setErrorDetails("");
@@ -443,6 +450,7 @@ function DataPlansPanel() {
               onChange={(event) => {
                 setServiceId(event.target.value);
                 setPlans(null);
+                setSelectedPlan(null);
                 setSelectedPlanIndex(null);
                 setErrorMessage("");
                 setErrorDetails("");
@@ -485,6 +493,9 @@ function DataPlansPanel() {
               <>
                 <div className="data-plan-list" aria-label="Available data plans">
                   {plans.map((plan, index) => {
+                    if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+                      return null;
+                    }
                     const name = getPlanName(plan, index);
                     const validity = getPlanValue(plan, [
                       "validity",
@@ -493,11 +504,14 @@ function DataPlansPanel() {
                     ]);
                     return (
                       <button
-                        className={`data-plan-card${selectedPlanIndex === index ? " data-plan-card-selected" : ""}`}
+                        className={`data-plan-card${selectedPlan === plan ? " data-plan-card-selected" : ""}`}
                         key={plan?.id ?? `${index}-${name}`}
                         type="button"
-                        aria-pressed={selectedPlanIndex === index}
-                        onClick={() => setSelectedPlanIndex(index)}
+                        aria-pressed={selectedPlan === plan}
+                        onClick={() => {
+                          setSelectedPlan(plan);
+                          setSelectedPlanIndex(index);
+                        }}
                       >
                         <strong>{name}</strong>
                         <span>Price: {getPlanPrice(plan)}</span>
@@ -560,10 +574,11 @@ function DataPlansPanel() {
   );
 }
 
-function AuthScreen() {
-  const [mode, setMode] = useState("login");
+function AuthScreen({ passwordRecovery = false, onRecoveryComplete }) {
+  const [mode, setMode] = useState(() => passwordRecovery ? "recovery" : "login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -573,7 +588,22 @@ function AuthScreen() {
     setMessage("");
 
     try {
-      if (mode === "register") {
+      if (mode === "forgot") {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin,
+        });
+        if (error) throw error;
+        setMessage("If an account exists for this address, a reset link has been sent.");
+      } else if (mode === "recovery") {
+        if (password !== confirmPassword) {
+          setMessage("The passwords do not match.");
+          return;
+        }
+        const { error } = await supabase.auth.updateUser({ password });
+        if (error) throw error;
+        setMode("recovery-complete");
+        setMessage("Your password has been updated.");
+      } else if (mode === "register") {
         const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
 
@@ -596,6 +626,26 @@ function AuthScreen() {
     }
   }
 
+  if (mode === "recovery-complete") {
+    return (
+      <main className="auth-page auth-recovery-page">
+        <section className="auth-card">
+          <Brand compact />
+          <span className="eyebrow">PASSWORD UPDATED</span>
+          <h2>Password changed successfully</h2>
+          <p className="form-message" role="status">{message}</p>
+          <button
+            className="primary-button auth-submit"
+            type="button"
+            onClick={onRecoveryComplete}
+          >
+            Continue to your account <Icon name="arrow" size={18} />
+          </button>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="auth-page">
       <section className="auth-aside">
@@ -615,60 +665,133 @@ function AuthScreen() {
       <section className="auth-content">
         <div className="auth-mobile-brand"><Brand compact /></div>
         <div className="auth-card">
-          <span className="eyebrow">{mode === "login" ? "WELCOME BACK" : "GET STARTED"}</span>
-          <h2>{mode === "login" ? "Sign in to your account" : "Create your account"}</h2>
+          <span className="eyebrow">
+            {mode === "login" || mode === "forgot"
+              ? "WELCOME BACK"
+              : mode === "recovery"
+                ? "RESET PASSWORD"
+                : "GET STARTED"}
+          </span>
+          <h2>
+            {mode === "login"
+              ? "Sign in to your account"
+              : mode === "register"
+                ? "Create your account"
+                : mode === "forgot"
+                  ? "Reset your password"
+                  : "Choose a new password"}
+          </h2>
           <p className="auth-description">
             {mode === "login"
               ? "Enter your details to continue to NUR2 DATA."
-              : "A few details and you're ready to get started."}
+              : mode === "register"
+                ? "A few details and you're ready to get started."
+                : mode === "forgot"
+                  ? "We'll send a reset link if an account matches this email."
+                  : "Choose a new password for your NUR2 DATA account."}
           </p>
 
-          <div className="auth-tabs" role="group" aria-label="Account action">
-            <button
-              type="button"
-              aria-pressed={mode === "login"}
-              onClick={() => { setMode("login"); setMessage(""); }}
-            >
-              Sign in
-            </button>
-            <button
-              type="button"
-              aria-pressed={mode === "register"}
-              onClick={() => { setMode("register"); setMessage(""); }}
-            >
-              Create account
-            </button>
-          </div>
+          {!passwordRecovery && mode !== "forgot" && (
+            <div className="auth-tabs" role="group" aria-label="Account action">
+              <button
+                type="button"
+                aria-pressed={mode === "login"}
+                onClick={() => { setMode("login"); setMessage(""); }}
+              >
+                Sign in
+              </button>
+              <button
+                type="button"
+                aria-pressed={mode === "register"}
+                onClick={() => { setMode("register"); setMessage(""); }}
+              >
+                Create account
+              </button>
+            </div>
+          )}
 
           <form className="auth-form" onSubmit={handleSubmit}>
-            <label htmlFor="email">Email address</label>
-            <input
-              id="email"
-              type="email"
-              placeholder="you@example.com"
-              autoComplete="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-            />
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              type="password"
-              placeholder="At least 6 characters"
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
-              minLength={6}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
+            {mode !== "recovery" && (
+              <>
+                <label htmlFor="email">Email address</label>
+                <input
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  required
+                  disabled={loading || passwordRecovery}
+                />
+              </>
+            )}
+            {mode !== "forgot" && (
+              <>
+                <label htmlFor="password">
+                  {mode === "recovery" ? "New password" : "Password"}
+                </label>
+                <input
+                  id="password"
+                  type="password"
+                  placeholder="At least 6 characters"
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  minLength={6}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                  disabled={loading}
+                />
+                {mode === "recovery" && (
+                  <>
+                    <label htmlFor="confirm-password">Confirm new password</label>
+                    <input
+                      id="confirm-password"
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={6}
+                      value={confirmPassword}
+                      onChange={(event) => setConfirmPassword(event.target.value)}
+                      required
+                      disabled={loading}
+                    />
+                  </>
+                )}
+              </>
+            )}
             <button className="primary-button auth-submit" type="submit" disabled={loading}>
-              {loading ? "Please wait..." : mode === "login" ? "Sign in" : "Create account"}
+              {loading
+                ? "Please wait..."
+                : mode === "login"
+                  ? "Sign in"
+                  : mode === "register"
+                    ? "Create account"
+                    : mode === "forgot"
+                      ? "Send reset link"
+                      : "Update password"}
               {!loading && <Icon name="arrow" size={18} />}
             </button>
           </form>
 
           {message && <p className="form-message" role="status">{message}</p>}
+          {mode === "login" && (
+            <button
+              className="text-button auth-recovery-link"
+              type="button"
+              onClick={() => { setMode("forgot"); setMessage(""); }}
+            >
+              Forgot password?
+            </button>
+          )}
+          {mode === "forgot" && (
+            <button
+              className="text-button auth-recovery-link"
+              type="button"
+              onClick={() => { setMode("login"); setMessage(""); }}
+            >
+              Back to sign in
+            </button>
+          )}
           <p className="auth-terms">By continuing, you agree to use NUR2 DATA responsibly.</p>
         </div>
         <p className="auth-mobile-copyright">© 2026 NUR2 DATA</p>
@@ -711,8 +834,11 @@ function WalletPanel({
       }
       onClearPaymentStatus();
       window.location.assign(checkoutUrl.toString());
-    } catch (error) {
-      setFundingError(error.message || "Unable to start wallet funding. Please try again.");
+    } catch {
+      onRetry();
+      setFundingError(
+        "Checkout could not be confirmed. Any pending payment reference is shown in wallet activity; verify it there before starting another checkout.",
+      );
       setFunding(false);
     }
   }
@@ -833,15 +959,37 @@ function WalletPanel({
                     <time dateTime={transaction.created_at}>
                       {transactionDateFormatter.format(new Date(transaction.created_at))}
                     </time>
-                    {transaction.payment_status !== "successful" && (
-                      <span className={`wallet-transaction-status wallet-transaction-${transaction.payment_status}`}>
-                        {transaction.payment_status}
+                    <span className={`wallet-transaction-status wallet-transaction-${transaction.payment_status}`}>
+                      {transaction.payment_status}
+                    </span>
+                    {transaction.payment_reference && (
+                      <span className="wallet-transaction-reference">
+                        Reference: {transaction.payment_reference}
                       </span>
                     )}
                   </span>
                   <span className="wallet-transaction-amount">
                     {formatNaira(transaction.amount)}
                   </span>
+                  {transaction.transaction_type === "deposit"
+                    && transaction.payment_provider === "paystack"
+                    && transaction.payment_status === "pending"
+                    && transaction.payment_reference && (
+                      <button
+                        className="text-button wallet-verify-button"
+                        type="button"
+                        onClick={() => onVerifyPayment(transaction.payment_reference)}
+                        disabled={
+                          paymentStatus?.status === "verifying"
+                          && paymentStatus.reference === transaction.payment_reference
+                        }
+                      >
+                        {paymentStatus?.status === "verifying"
+                          && paymentStatus.reference === transaction.payment_reference
+                          ? "Verifying..."
+                          : "Verify payment"}
+                      </button>
+                    )}
                 </li>
               ))}
             </ul>
@@ -852,21 +1000,327 @@ function WalletPanel({
   );
 }
 
+function HistoryPanel({ userId }) {
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState("");
+  const [moreError, setMoreError] = useState("");
+  const [nextCursor, setNextCursor] = useState(null);
+  const [retryCount, setRetryCount] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadHistory() {
+      setLoading(true);
+      setError("");
+      setMoreError("");
+      setNextCursor(null);
+
+      try {
+        const page = await fetchTransactionHistory(supabase, userId);
+        if (active) {
+          setTransactions(page.items);
+          setNextCursor(page.nextCursor);
+        }
+      } catch {
+        if (active) {
+          setTransactions([]);
+          setError("We couldn't load your transaction history. Check your connection and try again.");
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    loadHistory();
+    return () => {
+      active = false;
+    };
+  }, [retryCount, userId]);
+
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    setMoreError("");
+    try {
+      const page = await fetchTransactionHistory(supabase, userId, {
+        cursor: nextCursor,
+      });
+      setTransactions((current) => [...current, ...page.items]);
+      setNextCursor(page.nextCursor);
+    } catch {
+      setMoreError("We couldn't load older transactions. Please try again.");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  return (
+    <section className="content-card history-panel" aria-labelledby="history-heading">
+      <div className="history-panel-heading">
+        <div>
+          <span className="eyebrow">YOUR ACTIVITY</span>
+          <h2 id="history-heading">Transaction history</h2>
+          <p>Your wallet and data purchase transactions, newest first.</p>
+        </div>
+        {!loading && !error && transactions.length > 0 && (
+          <span className="history-count">{transactions.length} transactions</span>
+        )}
+      </div>
+
+      {loading ? (
+        <p className="wallet-data-state" role="status">Loading your transaction history...</p>
+      ) : error ? (
+        <div className="history-error" role="alert">
+          <p>{error}</p>
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => setRetryCount((count) => count + 1)}
+          >
+            Try again
+          </button>
+        </div>
+      ) : transactions.length === 0 ? (
+        <div className="wallet-empty-state">
+          <span className="empty-icon"><Icon name="clock" size={22} /></span>
+          <strong>No transactions yet</strong>
+          <p>Your wallet and data purchase activity will appear here.</p>
+        </div>
+      ) : (
+        <>
+          <div className="history-table-wrap">
+            <table className="history-table">
+              <thead>
+                <tr>
+                  <th scope="col">Transaction</th>
+                  <th scope="col">Reference</th>
+                  <th scope="col">Amount</th>
+                  <th scope="col">Date</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transactions.map((transaction) => (
+                  <tr key={transaction.id}>
+                    <td>
+                      <strong>{transaction.type}</strong>
+                      {transaction.description && <span>{transaction.description}</span>}
+                    </td>
+                    <td className="history-reference">{transaction.reference || "—"}</td>
+                    <td className="history-amount">{formatNaira(transaction.amount)}</td>
+                    <td>
+                      <time dateTime={transaction.createdAt}>
+                        {transactionDateFormatter.format(new Date(transaction.createdAt))}
+                      </time>
+                    </td>
+                    <td>
+                      <span className={`history-status history-status-${transaction.status}`}>
+                        {transaction.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {nextCursor && (
+            <div className="history-pagination">
+              {moreError && <p role="alert">{moreError}</p>}
+              <button
+                className="text-button"
+                type="button"
+                onClick={loadMore}
+                disabled={loadingMore}
+              >
+                {loadingMore ? "Loading older transactions..." : "Load older transactions"}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function AdminPanel() {
+  const [purchases, setPurchases] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadPage = useCallback(async (cursor, append = false) => {
+    if (append) setLoadingMore(true);
+    else setLoading(true);
+    setError("");
+
+    try {
+      const params = new URLSearchParams({ limit: "50" });
+      if (cursor) params.set("cursor", cursor);
+      const { data, error: invokeError } = await supabase.functions.invoke(
+        `admin-data-purchases?${params.toString()}`,
+        { method: "GET" },
+      );
+      if (invokeError) {
+        const status = invokeError.context?.status;
+        if (status === 401) throw new Error("Your session has expired. Sign in again.");
+        if (status === 403) throw new Error("Admin access is required to view this dashboard.");
+        throw new Error("Unable to load admin purchase monitoring.");
+      }
+      if (
+        !data
+        || !Array.isArray(data.purchases)
+        || !data.summary
+        || typeof data.summary.unresolved_purchase_count !== "number"
+        || typeof data.summary.customer_funds_awaiting_resolution !== "string"
+      ) {
+        throw new Error("The admin monitoring service returned invalid data.");
+      }
+      setPurchases((current) => append
+        ? [...current, ...data.purchases]
+        : data.purchases);
+      setSummary(data.summary);
+      setNextCursor(typeof data.next_cursor === "string" ? data.next_cursor : null);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load admin purchase monitoring.",
+      );
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    Promise.resolve().then(() => loadPage(null));
+  }, [loadPage]);
+
+  return (
+    <section className="content-card admin-panel" aria-labelledby="admin-heading">
+      <div className="admin-panel-heading">
+        <div>
+          <span className="eyebrow">RESTRICTED OPERATIONS</span>
+          <h2 id="admin-heading">Data purchase monitoring</h2>
+          <p>Read-only view of purchase states and customer funds awaiting resolution.</p>
+        </div>
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => loadPage(null)}
+          disabled={loading || loadingMore}
+        >
+          Refresh
+        </button>
+      </div>
+
+      {error ? (
+        <div className="admin-error" role="alert">
+          <p>{error}</p>
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => loadPage(null)}
+            disabled={loading}
+          >
+            Try again
+          </button>
+        </div>
+      ) : loading ? (
+        <p className="wallet-data-state" role="status">Loading admin purchase monitoring...</p>
+      ) : (
+        <>
+          <div className="admin-summary-grid" aria-label="Purchase summary">
+            <article>
+              <span>Unresolved purchases</span>
+              <strong>{summary.unresolved_purchase_count}</strong>
+            </article>
+            <article>
+              <span>Customer funds awaiting resolution</span>
+              <strong>{formatNaira(summary.customer_funds_awaiting_resolution)}</strong>
+            </article>
+          </div>
+
+          {purchases.length === 0 ? (
+            <div className="wallet-empty-state">
+              <strong>No data purchases to monitor</strong>
+            </div>
+          ) : (
+            <div className="history-table-wrap">
+              <table className="history-table admin-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Purchase</th>
+                    <th scope="col">Customer</th>
+                    <th scope="col">Amount</th>
+                    <th scope="col">Purchase state</th>
+                    <th scope="col">Provider work</th>
+                    <th scope="col">Attempts</th>
+                    <th scope="col">Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {purchases.map((purchase) => (
+                    <tr key={purchase.id}>
+                      <td>
+                        <strong>{purchase.id}</strong>
+                        {purchase.is_aging && <span className="admin-aging-flag">Aging</span>}
+                      </td>
+                      <td>
+                        {purchase.user_id}
+                        <span>{purchase.phone_number}</span>
+                      </td>
+                      <td className="history-amount">{formatNaira(purchase.amount)}</td>
+                      <td>{purchase.status}</td>
+                      <td>{purchase.provider_work_state}</td>
+                      <td>{purchase.provider_attempts}</td>
+                      <td>
+                        <time dateTime={purchase.created_at}>
+                          {transactionDateFormatter.format(new Date(purchase.created_at))}
+                        </time>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {nextCursor && (
+            <div className="history-pagination">
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => loadPage(nextCursor, true)}
+                disabled={loadingMore}
+              >
+                {loadingMore ? "Loading more purchases..." : "Load more purchases"}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ServicePanel({ page }) {
   const service = services.find((item) => item.id === page);
-  const isHistory = page === "history";
 
   return (
     <section className="content-card service-panel">
       <span className={`service-icon service-icon-${service?.color || "blue"}`}>
         <Icon name={service?.icon || "clock"} size={24} />
       </span>
-      <span className="eyebrow">{isHistory ? "YOUR ACTIVITY" : "COMING SOON"}</span>
-      <h2>{isHistory ? "Transaction history" : `${service?.label} is on the way`}</h2>
+      <span className="eyebrow">COMING SOON</span>
+      <h2>{service?.label} is on the way</h2>
       <p>
-        {isHistory
-          ? "Your transactions will appear here once VTUGate services are connected."
-          : "We're preparing this service. Transactions will be enabled when the secure VTUGate integration is configured."}
+        We're preparing this service. Transactions will be enabled when the secure VTUGate integration is configured.
       </p>
       <div className="integration-note">
         <Icon name="shield" size={18} />
@@ -887,6 +1341,9 @@ function Dashboard({ user }) {
   const [message, setMessage] = useState("");
   const [wallet, setWallet] = useState(null);
   const [walletTransactions, setWalletTransactions] = useState([]);
+  const [recentActivity, setRecentActivity] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(true);
+  const [activityError, setActivityError] = useState("");
   const [walletLoading, setWalletLoading] = useState(true);
   const [walletError, setWalletError] = useState("");
   const [paymentStatus, setPaymentStatus] = useState(() => (
@@ -905,6 +1362,20 @@ function Dashboard({ user }) {
   const firstName = user.email?.split("@")[0] || "there";
   const initials = (user.email?.[0] || "N").toUpperCase();
 
+  const loadRecentActivity = useCallback(async () => {
+    setActivityLoading(true);
+    setActivityError("");
+    try {
+      const page = await fetchTransactionHistory(supabase, user.id, { limit: 5 });
+      setRecentActivity(page.items);
+    } catch {
+      setRecentActivity([]);
+      setActivityError("Recent activity could not be loaded.");
+    } finally {
+      setActivityLoading(false);
+    }
+  }, [user.id]);
+
   const loadWalletData = useCallback(async () => {
     const requestId = ++walletRequestId.current;
 
@@ -917,9 +1388,11 @@ function Dashboard({ user }) {
           .maybeSingle(),
         supabase
           .from("wallet_transactions")
-          .select("id, transaction_type, amount, created_at, payment_status")
+          .select("id, transaction_type, amount, created_at, payment_status, payment_provider, payment_reference")
           .eq("user_id", user.id)
-          .order("created_at", { ascending: false }),
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .limit(50),
       ]);
 
       if (walletResponse.error) throw walletResponse.error;
@@ -976,10 +1449,9 @@ function Dashboard({ user }) {
         failed: "Paystack reported that this payment failed. Your wallet has not been credited.",
       };
       setPaymentStatus({ status: data.status, message: messages[data.status], reference });
-      if (data.status === "successful") {
-        setWalletLoading(true);
-        loadWalletData();
-      }
+      setWalletLoading(true);
+      loadWalletData();
+      loadRecentActivity();
     } catch {
       setPaymentStatus({
         status: "error",
@@ -987,7 +1459,7 @@ function Dashboard({ user }) {
         reference,
       });
     }
-  }, [loadWalletData]);
+  }, [loadRecentActivity, loadWalletData]);
 
   useEffect(() => {
     let active = true;
@@ -999,6 +1471,10 @@ function Dashboard({ user }) {
       walletRequestId.current += 1;
     };
   }, [loadWalletData]);
+
+  useEffect(() => {
+    Promise.resolve().then(loadRecentActivity);
+  }, [loadRecentActivity]);
 
   useEffect(() => {
     const callbackUrl = new URL(window.location.href);
@@ -1029,6 +1505,7 @@ function Dashboard({ user }) {
     setWalletLoading(true);
     setWalletError("");
     loadWalletData();
+    loadRecentActivity();
   }
 
   function clearPaymentStatus() {
@@ -1168,8 +1645,20 @@ function Dashboard({ user }) {
                 <div className="overview-card">
                   <span className="overview-card-icon overview-icon-purple"><Icon name="clock" size={20} /></span>
                   <span className="overview-label">Recent activity</span>
-                  <strong className="overview-value">No transactions</strong>
-                  <span className="overview-footnote">Activity will show here</span>
+                  <strong className="overview-value">
+                    {activityLoading
+                      ? "Loading..."
+                      : activityError
+                        ? "Unavailable"
+                        : recentActivity[0]?.type || "No transactions"}
+                  </strong>
+                  <span className="overview-footnote">
+                    {recentActivity.length
+                      ? `${recentActivity.length} recent transaction${recentActivity.length === 1 ? "" : "s"}`
+                      : activityError
+                        ? "Unable to load activity"
+                        : "Activity will show here"}
+                  </span>
                 </div>
               </section>
 
@@ -1204,11 +1693,40 @@ function Dashboard({ user }) {
                     View history <Icon name="arrow" size={16} />
                   </button>
                 </div>
-                <div className="empty-activity">
-                  <span className="empty-icon"><Icon name="receipt" size={22} /></span>
-                  <strong>No activity yet</strong>
-                  <p>Your completed transactions will appear here.</p>
-                </div>
+                {activityLoading ? (
+                  <p className="wallet-data-state" role="status">Loading recent activity...</p>
+                ) : activityError ? (
+                  <div className="history-error" role="alert">
+                    <p>{activityError}</p>
+                    <button className="text-button" type="button" onClick={loadRecentActivity}>
+                      Try again
+                    </button>
+                  </div>
+                ) : recentActivity.length === 0 ? (
+                  <div className="empty-activity">
+                    <span className="empty-icon"><Icon name="receipt" size={22} /></span>
+                    <strong>No activity yet</strong>
+                    <p>Your wallet and data purchase activity will appear here.</p>
+                  </div>
+                ) : (
+                  <ul className="dashboard-activity-list" aria-label="Recent transactions">
+                    {recentActivity.map((transaction) => (
+                      <li key={transaction.id}>
+                        <span className="dashboard-activity-copy">
+                          <strong>{transaction.type}</strong>
+                          <small>{transaction.description || transaction.reference || "Wallet activity"}</small>
+                          <time dateTime={transaction.createdAt}>
+                            {transactionDateFormatter.format(new Date(transaction.createdAt))}
+                          </time>
+                        </span>
+                        <span className="dashboard-activity-value">
+                          <strong>{formatNaira(transaction.amount)}</strong>
+                          <small>{transaction.status}</small>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </section>
             </>
           ) : (
@@ -1233,6 +1751,10 @@ function Dashboard({ user }) {
                   onVerifyPayment={verifyPayment}
                   onClearPaymentStatus={clearPaymentStatus}
                 />
+              ) : page === "history" ? (
+                <HistoryPanel userId={user.id} />
+              ) : page === "admin" ? (
+                <AdminPanel />
               ) : (
                 <ServicePanel page={page} />
               )}
@@ -1265,11 +1787,17 @@ function Dashboard({ user }) {
 function AuthenticatedApp() {
   const [user, setUser] = useState(null);
   const [sessionChecked, setSessionChecked] = useState(false);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
 
   useEffect(() => {
     let active = true;
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (active) {
+        if (event === "PASSWORD_RECOVERY") {
+          setPasswordRecovery(true);
+        } else if (event === "SIGNED_IN" || event === "SIGNED_OUT") {
+          setPasswordRecovery(false);
+        }
         setUser(session?.user ?? null);
         setSessionChecked(true);
       }
@@ -1296,6 +1824,15 @@ function AuthenticatedApp() {
 
   if (!sessionChecked) {
     return <main className="session-loading" aria-label="Loading your account"><span /></main>;
+  }
+
+  if (passwordRecovery && user) {
+    return (
+      <AuthScreen
+        passwordRecovery
+        onRecoveryComplete={() => setPasswordRecovery(false)}
+      />
+    );
   }
 
   return user ? <Dashboard user={user} /> : <AuthScreen />;

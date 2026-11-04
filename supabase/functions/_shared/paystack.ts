@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.118.0";
+import { bearerToken } from "./auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,8 +24,8 @@ export function optionsResponse(): Response {
 }
 
 export async function authenticatedUser(request: Request) {
-  const authorization = request.headers.get("Authorization");
-  if (!authorization?.startsWith("Bearer ")) return null;
+  const token = bearerToken(request);
+  if (!token) return null;
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
@@ -32,7 +33,7 @@ export async function authenticatedUser(request: Request) {
 
   const client = createClient(supabaseUrl, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
-    global: { headers: { Authorization: authorization } },
+    global: { headers: { Authorization: `Bearer ${token}` } },
   });
   const { data, error } = await client.auth.getUser();
   if (error || !data.user) return null;

@@ -13,13 +13,20 @@ publishable/anon key here; never use a Supabase secret or service-role key.
 Vite is configured to reject secret/service-role keys during startup and builds.
 
 The app includes email sign-in and registration, an authenticated dashboard,
-and airtime, data, bills, and transaction-history views. The Data section loads
-plans through the authenticated `fetchdataplans` function. Transactions remain
-disabled until a secure VTUGate purchase integration is configured.
+and airtime, data, bills, wallet, and transaction-history views. The dashboard
+shows recent wallet and data-purchase activity, and the history view supports
+bounded cursor pagination. The Data section loads plans through the
+authenticated `fetchdataplans` function. Transactions remain disabled until a
+secure VTUGate purchase integration is configured.
+Password recovery uses Supabase email recovery; allow the application's
+configured HTTPS origin in Supabase Auth redirect URL settings.
 The Data section lets users select a network, enter a Nigerian phone number,
 choose a returned plan, and review a confirmation summary. Its Continue action
 only displays that summary; it does not submit a purchase. The VTUGate service
 ID remains an explicit input because the service catalog is not integrated.
+The `purchase-data` deployment entry point is hard-disabled regardless of
+environment flags, and the data-purchase worker is also hard-disabled. Neither
+the app nor those functions submits purchases to VTUGate.
 
 The Wallet section reads the authenticated user's balance and transaction
 history. Direct client writes to wallet and transaction tables remain blocked
@@ -35,7 +42,7 @@ linked project is the intended one, review `supabase migration list`, run
 
 ## Paystack Test Mode wallet funding
 
-The wallet payment flow requires the unapplied
+The wallet payment flow requires the
 `20261031175231_add_paystack_wallet_funding.sql` migration and the
 `initialize-wallet-funding` and `verify-wallet-funding` Edge Functions. Review
 the migration before applying it: it adds Paystack reference/status metadata,
@@ -64,6 +71,42 @@ and exact kobo amount with Paystack before calling the atomic database credit
 function. A browser redirect or client-side success message never credits a
 wallet.
 
+## Admin purchase monitoring
+
+The Admin section calls the `admin-data-purchases` Edge Function, which
+authenticates the Supabase user and checks `admin_members` on every request.
+The browser UI is not an authorization boundary; non-members must receive
+`403`, and the function exposes only its read-only purchase projection and
+summary.
+
+To provision an administrator, first review and apply
+`20261103133500_create_admin_members.sql` to the intended environment. A
+trusted database operator should identify the user's immutable Supabase Auth
+user ID, then add or remove that ID in `public.admin_members` using a
+privileged administrative connection. Never provision membership from browser
+code, user metadata, app role claims, or a service-role key exposed to a user.
+Keep that connection and every service-role credential inside trusted
+administrative tooling. The membership audit trigger records grant/revoke
+events, but actor attribution can be null when changes are made through a
+privileged service role; verify and document the operator identity separately.
+No admin account is provisioned automatically.
+
+## VTUGate purchase release blocker
+
+The source-observed `fetchdataplans` URL and form request document only the
+catalog operation. Authoritative VTUGate Buy Data and Transaction Status API
+contracts have not been verified. Do not invent endpoints, payloads, response
+meanings, idempotency behavior, or retry rules. Keep purchase intake and the
+worker disabled until current, provider-owned documentation confirms both
+contracts, implementation and reconciliation safeguards are reviewed, and
+non-production fulfillment tests demonstrate safe outcomes. Ambiguous
+provider transactions must never be resubmitted automatically.
+
+The SQL migrations and SQL tests have not been run as part of this change.
+Verify which migrations have been reviewed and applied in each environment
+before enabling any dependent feature; do not infer production schema state
+from repository files.
+
 ## Fetch VTUGate data plans
 
 The `fetchdataplans` Supabase Edge Function proxies data-plan requests to
@@ -81,3 +124,22 @@ forwards the request to VTUGate over HTTPS and keeps the API key server-side.
 Enter a service ID supplied by your VTUGate service catalog in the Data
 section; the function returns the VTUGate response unchanged, including its
 `data.data_plans` list.
+
+## Local validation
+
+Run the JavaScript unit and handler tests, linter, and production build locally:
+
+```sh
+npm test
+npm run lint
+npm run build
+```
+
+The SQL tests require a disposable local Supabase stack. Run them only against
+that local database, never against a linked or production project:
+
+```sh
+supabase start
+supabase test db
+supabase stop
+```

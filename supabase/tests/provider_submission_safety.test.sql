@@ -88,6 +88,11 @@ select public.create_data_purchase_and_debit_idempotent(
   10
 ) as id;
 
+create temporary table purchase_a_references_before_retry as
+select reference, client_reference
+from public.data_purchases
+where id = (select id from purchase_a);
+
 create temporary table purchase_a_retry as
 select public.create_data_purchase_and_debit_idempotent(
   (select user_one from migration_test_context),
@@ -104,6 +109,26 @@ select is(
   (select id from purchase_a_retry),
   (select id from purchase_a),
   'an identical idempotent retry returns the original purchase'
+);
+
+select is(
+  (
+    select purchase.reference
+    from public.data_purchases as purchase
+    where purchase.id = (select id from purchase_a_retry)
+  ),
+  (select reference from purchase_a_references_before_retry),
+  'an identical retry preserves the original NUR2 reference'
+);
+
+select is(
+  (
+    select purchase.client_reference
+    from public.data_purchases as purchase
+    where purchase.id = (select id from purchase_a_retry)
+  ),
+  (select client_reference from purchase_a_references_before_retry),
+  'an identical retry preserves the original client_reference'
 );
 
 select is(
@@ -133,6 +158,19 @@ select is(
   ),
   90::numeric,
   'an idempotent retry debits the wallet only once'
+);
+
+select is(
+  (
+    select count(*)::integer
+    from public.wallet_transactions as transaction
+    join public.data_purchases as purchase
+      on purchase.wallet_transaction_id = transaction.id
+    where purchase.idempotency_key = 'purchase-key-a'
+      and transaction.transaction_type = 'purchase'
+  ),
+  1,
+  'a duplicate idempotency key creates only one purchase debit'
 );
 
 select throws_ok(
@@ -395,45 +433,23 @@ select throws_ok(
   'rejects not-found confirmation with an invalid reconciliation token'
 );
 
-select lives_ok(
-  format(
-    'select public.confirm_data_purchase_not_found(%L::uuid, %L::uuid)',
-    (select id from reconciliation_b),
-    (select provider_lease_token from reconciliation_b)
+select ok(
+  not has_function_privilege(
+    'service_role',
+    'public.confirm_data_purchase_not_found(uuid,uuid)',
+    'EXECUTE'
   ),
-  'accepts a not-found result under the active reconciliation lease'
+  'service_role cannot assert provider not-found'
 );
 
-select is(
-  (
-    select provider_work_state
-    from public.data_purchases
-    where id = (select id from reconciliation_b)
-  ),
-  'confirmed_not_found',
-  'a confirmed not-found result enables a safe retry'
-);
-
-create temporary table retry_b as
-select * from public.claim_next_data_purchase(60);
-
-select is(
-  (select count(*)::integer from retry_b),
-  1,
-  'a confirmed-not-found purchase can be submitted again'
-);
-
-select is(
-  (select client_reference from retry_b),
-  (select client_reference from claim_b),
-  'submission retry reuses the original client reference'
-);
+create temporary table reconciliation_outcome_b as
+select * from reconciliation_b;
 
 select lives_ok(
   format(
     'select public.transition_data_purchase_outcome(%L::uuid, %L::uuid, %L, null, null)',
-    (select id from retry_b),
-    (select provider_lease_token from retry_b),
+    (select id from reconciliation_outcome_b),
+    (select provider_lease_token from reconciliation_outcome_b),
     'unknown'
   ),
   'accepts an unknown provider outcome'
@@ -443,7 +459,7 @@ select is(
   (
     select provider_work_state
     from public.data_purchases
-    where id = (select id from retry_b)
+    where id = (select id from reconciliation_outcome_b)
   ),
   'reconciliation_required',
   'an unknown outcome requires reconciliation before another submission'
@@ -559,14 +575,13 @@ select ok(
         ('public.claim_next_data_purchase(integer)'),
         ('public.claim_next_data_purchase_reconciliation(integer)'),
         ('public.transition_data_purchase_outcome(uuid,uuid,text,text,text)'),
-        ('public.confirm_data_purchase_not_found(uuid,uuid)'),
         ('public.refund_failed_data_purchase(uuid)')
     ),
     resolved as (
       select signature, to_regprocedure(signature) as function_oid
       from signatures
     )
-    select count(*) = 7
+    select count(*) = 6
       and bool_and(
         has_function_privilege('service_role', function_oid, 'EXECUTE')
         and not has_function_privilege('anon', function_oid, 'EXECUTE')
@@ -595,7 +610,7 @@ select ok(
     where privilege.grantee = '0'::oid
       and privilege.privilege_type = 'EXECUTE'
   ),
-  'all privileged functions exist, are executable by service_role, and have no PUBLIC, anon, or authenticated execute grant'
+  'purchase functions exist with intended service_role grants and no PUBLIC, anon, or authenticated execute grant'
 );
 
 select * from finish();
