@@ -1,3 +1,4 @@
+import SuperAdminPanel from "./SuperAdminPanel";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase, supabaseConfigError } from "./supabase";
 import { fetchTransactionHistory } from "./data/transactions";
@@ -1754,7 +1755,7 @@ function Dashboard({ user }) {
               ) : page === "history" ? (
                 <HistoryPanel userId={user.id} />
               ) : page === "admin" ? (
-                <AdminPanel />
+                <><AdminPanel /><SuperAdminPanel /></>
               ) : (
                 <ServicePanel page={page} />
               )}
