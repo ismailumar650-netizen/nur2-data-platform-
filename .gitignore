@@ -32,3 +32,8 @@ dist-ssr
 # Supabase local state and secrets
 supabase/.temp/
 supabase/.branches/
+
+# Local review archives and backups
+*.zip
+src/App.jsx.super-admin-backup
+supabase/functions/data-purchase-worker/handler.ts.save

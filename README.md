@@ -2,8 +2,9 @@
 
 ## Local setup
 
-1. Install dependencies with `npm install`.
-2. Copy `.env.example` to `.env`.
+1. Use Node.js 22.12 or newer.
+2. Install dependencies with `npm ci`.
+3. Copy `.env.example` to `.env`.
 3. Set `VITE_SUPABASE_URL` to the Project URL shown in your Supabase project settings.
 4. Set `VITE_SUPABASE_ANON_KEY` to the project's publishable key (or legacy anon key).
 5. Start the app with `npm run dev`.
@@ -127,10 +128,11 @@ section; the function returns the VTUGate response unchanged, including its
 
 ## Local validation
 
-Run the JavaScript unit and handler tests, linter, and production build locally:
+Run the JavaScript unit and Edge Function handler tests, linter, and production build locally. The default test command uses Node.js type stripping for the repository's TypeScript handler modules:
 
 ```sh
 npm test
+npm run test:integration
 npm run lint
 npm run build
 ```
@@ -143,3 +145,5 @@ supabase start
 supabase test db
 supabase stop
 ```
+
+`npm run test:integration` exercises the admin authentication integration harness and requires the installed `@supabase/supabase-js` dependency. The SQL suite requires Docker plus the Supabase CLI. Neither hosted nor production database state is changed by the local test commands.
